@@ -6,6 +6,8 @@ pub use self::io::*;
 
 #[cfg(feature = "read")]
 extern crate alloc;
+#[cfg(feature = "std")]
+extern crate std;
 
 /// Encapsulates a firmware dump.
 pub struct FirmwareDump<F> {
