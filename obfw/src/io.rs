@@ -11,7 +11,7 @@ pub trait DumpRead: DumpFile {
 }
 
 #[cfg(all(feature = "read", feature = "std"))]
-impl<T: std::io::Read> DumpRead for T {
+impl<T: std::io::Read + std::io::Seek> DumpRead for T {
     fn read(&mut self, buf: &mut [u8]) -> Result<(), Self::Err> {
         std::io::Read::read_exact(self, buf)
     }

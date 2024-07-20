@@ -43,6 +43,7 @@ pub struct FirmwareItems<'a, F> {
 
 #[cfg(feature = "read")]
 impl<'a, F: DumpRead> FirmwareItems<'a, F> {
+    #[allow(clippy::should_implement_trait)] // We want to be able to drop-in implement Iterator.
     pub fn next(&mut self) -> Option<Result<FirmwareItem<F>, ItemError<F::Err>>> {
         // Read item type.
         let mut ty = 0;
@@ -97,7 +98,7 @@ impl<'a, F: DumpRead> FirmwareItems<'a, F> {
             Err(e) => return Err(ItemError::ReadFailed(e)),
         };
 
-        Ok((name, ItemReader::new(&mut self.file, len)))
+        Ok((name, ItemReader::new(self.file, len)))
     }
 }
 
@@ -145,7 +146,7 @@ pub enum ItemError<F> {
 }
 
 #[cfg(all(feature = "read", feature = "std"))]
-impl<F: std::error::Error> std::error::Error for ItemError<F> {
+impl<F: std::error::Error + 'static> std::error::Error for ItemError<F> {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::ReadFailed(e) => Some(e),
