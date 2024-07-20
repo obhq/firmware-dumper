@@ -1,0 +1,17 @@
+{
+  "[rust]": {
+    "editor.formatOnSave": true
+  },
+  "files.insertFinalNewline": true,
+  "files.trimFinalNewlines": true,
+  "files.trimTrailingWhitespace": true,
+  "rust-analyzer.cargo.allTargets": false,
+  "rust-analyzer.cargo.extraEnv": {
+    "RUSTFLAGS": "--cfg fw=\"1100\""
+  },
+  "rust-analyzer.cargo.features": ["read", "write"],
+  "rust-analyzer.cargo.target": "x86_64-unknown-none",
+  "rust-analyzer.imports.granularity.enforce": true,
+  "rust-analyzer.imports.granularity.group": "module",
+  "rust-analyzer.imports.group.enable": false
+}

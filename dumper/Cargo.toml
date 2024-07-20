@@ -1,0 +1,10 @@
+[package]
+name = "dumper"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+okf = { git = "ssh://git@github.com/obhq/kernel-framework.git" }
+
+[target.'cfg(fw = "1100")'.dependencies]
+okf-1100 = { git = "ssh://git@github.com/obhq/kernel-framework.git" }
