@@ -1,0 +1,19 @@
+name: Development Build
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v4
+    - name: Check code styles
+      run: cargo fmt --check
+    - name: Lint obfw
+      run: cargo clippy --package obfw --all-features -- -D warnings
