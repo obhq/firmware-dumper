@@ -17,6 +17,8 @@ jobs:
       run: rustup toolchain install nightly
     - name: Install required Rust components
       run: rustup component add --toolchain nightly clippy llvm-tools rust-src
+    - name: Install required Rust targets
+      run: rustup target add --toolchain nightly x86_64-unknown-none
     - name: Check code styles
       run: cargo fmt --check
     - name: Lint dumper
