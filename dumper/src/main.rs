@@ -7,7 +7,9 @@ use core::cmp::min;
 use core::ffi::c_int;
 use core::mem::zeroed;
 use core::panic::PanicInfo;
-use okf::fd::{openat, write, OpenFlags, AT_FDCWD};
+use okf::fd::{openat, write_all, OpenFlags, AT_FDCWD};
+use okf::lock::MtxLock;
+use okf::mount::Mount;
 use okf::pcpu::Pcpu;
 use okf::uio::UioSeg;
 use okf::{kernel, Allocator, Kernel};
@@ -83,6 +85,17 @@ fn run<K: Kernel>(k: K) {
         }
     };
 
+    // Get target mounts.
+    let mtx = k.var(K::MOUNTLIST_MTX);
+    let lock = unsafe { MtxLock::new(k, mtx.ptr()) };
+    let list = k.var(K::MOUNTLIST);
+    let mut mp = unsafe { (*list.ptr()).first };
+
+    while !mp.is_null() {
+        mp = unsafe { (*mp).entry().next };
+    }
+
+    drop(lock);
     drop(fd);
 
     // Notify the user.
@@ -119,9 +132,10 @@ fn notify<K: Kernel>(k: K, msg: &str) {
     // Write notification.
     let len = size_of_val(&data);
     let data = &data as *const OrbisNotificationRequest as *const u8;
+    let data = unsafe { core::slice::from_raw_parts(data, len) };
     let td = K::Pcpu::curthread();
 
-    unsafe { write(k, fd.as_raw_fd(), data, UioSeg::Kernel, len, td).ok() };
+    unsafe { write_all(k, fd.as_raw_fd(), data, UioSeg::Kernel, td).ok() };
 }
 
 #[panic_handler]
