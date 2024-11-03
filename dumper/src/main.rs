@@ -1,11 +1,18 @@
 #![no_std]
 #![no_main]
 
+use alloc::format;
 use core::arch::global_asm;
+use core::cmp::min;
+use core::ffi::c_int;
+use core::mem::{transmute, zeroed};
 use core::panic::PanicInfo;
-use okf::fd::{openat, OpenFlags, AT_FDCWD};
+use okf::fd::{openat, write, OpenFlags, AT_FDCWD};
+use okf::pcpu::Pcpu;
 use okf::uio::UioSeg;
-use okf::{kernel, Kernel};
+use okf::{kernel, Allocator, Kernel};
+
+extern crate alloc;
 
 // The job of this custom entry point is:
 //
@@ -67,10 +74,53 @@ fn run<K: Kernel>(k: K) {
     let flags = OpenFlags::O_WRONLY | OpenFlags::O_CREAT | OpenFlags::O_TRUNC;
     let fd = match unsafe { openat(k, AT_FDCWD, path.as_ptr(), UioSeg::Kernel, flags, 0o777) } {
         Ok(v) => v,
-        Err(_) => return,
+        Err(e) => {
+            notify(
+                k,
+                &format!("Could not open /mnt/usb0/firmware.obf ({})", c_int::from(e)),
+            );
+            return;
+        }
     };
 
     drop(fd);
+
+    // Notify the user.
+    notify(k, "Dump completed!");
+}
+
+fn notify<K: Kernel>(k: K, msg: &str) {
+    // Open notification device.
+    let devs = [c"/dev/notification0", c"/dev/notification1"];
+    let mut fd = None;
+
+    for dev in devs.into_iter().map(|v| v.as_ptr()) {
+        if let Ok(v) = unsafe { openat(k, AT_FDCWD, dev, UioSeg::Kernel, OpenFlags::O_WRONLY, 0) } {
+            fd = Some(v);
+            break;
+        }
+    }
+
+    // Check if we have a device to write to.
+    let fd = match fd {
+        Some(v) => v,
+        None => return,
+    };
+
+    // Setup notification.
+    let mut data: OrbisNotificationRequest = unsafe { zeroed() };
+    let msg = msg.as_bytes();
+    let len = min(data.message.len() - 1, msg.len());
+
+    data.target_id = -1;
+    data.use_icon_image_uri = 1;
+    data.message[..len].copy_from_slice(&msg[..len]);
+
+    // Write notification.
+    let len = size_of_val(&data);
+    let td = K::Pcpu::curthread();
+
+    unsafe { write(k, fd.as_raw_fd(), transmute(&data), UioSeg::Kernel, len, td).ok() };
 }
 
 #[panic_handler]
@@ -78,3 +128,26 @@ fn panic(_: &PanicInfo) -> ! {
     // Nothing to do here since we enabled panic_immediate_abort.
     loop {}
 }
+
+/// By OSM-Made.
+#[repr(C)]
+struct OrbisNotificationRequest {
+    ty: c_int,
+    req_id: c_int,
+    priority: c_int,
+    msg_id: c_int,
+    target_id: c_int,
+    user_id: c_int,
+    unk1: c_int,
+    unk2: c_int,
+    app_id: c_int,
+    error_num: c_int,
+    unk3: c_int,
+    use_icon_image_uri: u8,
+    message: [u8; 1024],
+    icon_uri: [u8; 1024],
+    unk: [u8; 1024],
+}
+
+#[global_allocator]
+static ALLOCATOR: Allocator<kernel!()> = Allocator::new();
