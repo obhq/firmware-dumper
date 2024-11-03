@@ -5,7 +5,7 @@ use alloc::format;
 use core::arch::global_asm;
 use core::cmp::min;
 use core::ffi::c_int;
-use core::mem::{transmute, zeroed};
+use core::mem::zeroed;
 use core::panic::PanicInfo;
 use okf::fd::{openat, write, OpenFlags, AT_FDCWD};
 use okf::pcpu::Pcpu;
@@ -118,9 +118,10 @@ fn notify<K: Kernel>(k: K, msg: &str) {
 
     // Write notification.
     let len = size_of_val(&data);
+    let data = &data as *const OrbisNotificationRequest as *const u8;
     let td = K::Pcpu::curthread();
 
-    unsafe { write(k, fd.as_raw_fd(), transmute(&data), UioSeg::Kernel, len, td).ok() };
+    unsafe { write(k, fd.as_raw_fd(), data, UioSeg::Kernel, len, td).ok() };
 }
 
 #[panic_handler]
