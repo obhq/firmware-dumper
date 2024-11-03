@@ -3,6 +3,9 @@
 
 use core::arch::global_asm;
 use core::panic::PanicInfo;
+use okf::fd::{openat, OpenFlags, AT_FDCWD};
+use okf::uio::UioSeg;
+use okf::{kernel, Kernel};
 
 // The job of this custom entry point is:
 //
@@ -54,7 +57,21 @@ global_asm!(
 );
 
 #[no_mangle]
-extern "C" fn main(_: *const u8) {}
+extern "C" fn main(_: *const u8) {
+    run(<kernel!()>::default())
+}
+
+fn run<K: Kernel>(k: K) {
+    // Create dump file.
+    let path = c"/mnt/usb0/firmware.obf";
+    let flags = OpenFlags::O_WRONLY | OpenFlags::O_CREAT | OpenFlags::O_TRUNC;
+    let fd = match unsafe { openat(k, AT_FDCWD, path.as_ptr(), UioSeg::Kernel, flags, 0o777) } {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    drop(fd);
+}
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
