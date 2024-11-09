@@ -11,7 +11,7 @@ use core::panic::PanicInfo;
 use obfw::FirmwareDump;
 use okf::fd::{openat, write_all, OpenFlags, AT_FDCWD};
 use okf::lock::MtxLock;
-use okf::mount::{Filesystem, Mount};
+use okf::mount::{Filesystem, FsStats, Mount};
 use okf::pcpu::Pcpu;
 use okf::uio::UioSeg;
 use okf::{kernel, Allocator, Kernel};
@@ -168,12 +168,26 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
         return true;
     }
 
-    // Write header.
-    if !write_dump(
-        k,
-        fd,
-        core::slice::from_ref(&FirmwareDump::<()>::ITEM_PARTITION),
-    ) {
+    // Write entry type.
+    if !write_dump(k, fd, &[FirmwareDump::<()>::ITEM_PARTITION]) {
+        return false;
+    }
+
+    // Write entry version.
+    if !write_dump(k, fd, &[0]) {
+        return false;
+    }
+
+    // Write filesystem type.
+    if !write_dump(k, fd, &name.len().to_le_bytes()) || !write_dump(k, fd, name) {
+        return false;
+    }
+
+    // Write mounted from.
+    let stats = (*mp).stats();
+    let path = CStr::from_ptr((*stats).mounted_from()).to_bytes();
+
+    if !write_dump(k, fd, &path.len().to_le_bytes()) || write_dump(k, fd, path) {
         return false;
     }
 
