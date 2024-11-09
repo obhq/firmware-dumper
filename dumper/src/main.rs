@@ -8,7 +8,6 @@ use core::ffi::c_int;
 use core::mem::zeroed;
 use core::panic::PanicInfo;
 use okf::fd::{openat, write_all, OpenFlags, AT_FDCWD};
-use okf::lock::MtxLock;
 use okf::mount::Mount;
 use okf::pcpu::Pcpu;
 use okf::uio::UioSeg;
@@ -85,17 +84,30 @@ fn run<K: Kernel>(k: K) {
         }
     };
 
-    // Get target mounts.
+    // Lock mount list.
     let mtx = k.var(K::MOUNTLIST_MTX);
-    let lock = unsafe { MtxLock::new(k, mtx.ptr()) };
+
+    unsafe { k.mtx_lock_flags(mtx.ptr(), 0, c"".as_ptr(), 0) };
+
+    // Dump all read-only mounts.
     let list = k.var(K::MOUNTLIST);
     let mut mp = unsafe { (*list.ptr()).first };
 
     while !mp.is_null() {
+        // vfs_busy always success without MBF_NOWAIT.
+        unsafe { k.vfs_busy(mp, K::MBF_MNTLSTLOCK) };
+
+        // vfs_busy with MBF_MNTLSTLOCK will unlock before return so we need to re-acquire the lock.
+        unsafe { k.mtx_lock_flags(mtx.ptr(), 0, c"".as_ptr(), 0) };
+
+        // This need to be done inside mountlist_mtx otherwise our current mp may be freed when we
+        // try to access the next mount point.
+        unsafe { k.vfs_unbusy(mp) };
+
         mp = unsafe { (*mp).entry().next };
     }
 
-    drop(lock);
+    unsafe { k.mtx_unlock_flags(mtx.ptr(), 0, c"".as_ptr(), 0) };
     drop(fd);
 
     // Notify the user.
