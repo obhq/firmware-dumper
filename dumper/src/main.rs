@@ -8,6 +8,7 @@ use core::ffi::c_int;
 use core::mem::zeroed;
 use core::panic::PanicInfo;
 use okf::fd::{openat, write_all, OpenFlags, AT_FDCWD};
+use okf::lock::MtxLock;
 use okf::mount::Mount;
 use okf::pcpu::Pcpu;
 use okf::uio::UioSeg;
@@ -97,6 +98,15 @@ fn run<K: Kernel>(k: K) {
         // vfs_busy always success without MBF_NOWAIT.
         unsafe { k.vfs_busy(mp, K::MBF_MNTLSTLOCK) };
 
+        // Check if read-only.
+        let lock = unsafe { MtxLock::new(k, (*mp).mtx()) };
+
+        if unsafe { (*mp).flags() & K::MNT_RDONLY != 0 } {
+            unsafe { dump_mount(mp, lock) };
+        } else {
+            drop(lock);
+        }
+
         // vfs_busy with MBF_MNTLSTLOCK will unlock before return so we need to re-acquire the lock.
         unsafe { k.mtx_lock_flags(mtx.ptr(), 0, c"".as_ptr(), 0) };
 
@@ -113,6 +123,8 @@ fn run<K: Kernel>(k: K) {
     // Notify the user.
     notify(k, "Dump completed!");
 }
+
+unsafe fn dump_mount<K: Kernel>(_: *mut K::Mount, _: MtxLock<K>) {}
 
 fn notify<K: Kernel>(k: K, msg: &str) {
     // Open notification device.
