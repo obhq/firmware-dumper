@@ -129,6 +129,19 @@ fn run<K: Kernel>(k: K) {
     }
 
     unsafe { k.mtx_unlock_flags(mtx.ptr(), 0, c"".as_ptr(), 0) };
+
+    // Flush data.
+    if ok {
+        let td = K::Pcpu::curthread();
+        let errno = unsafe { k.kern_fsync(td, fd.as_raw_fd(), 1) };
+
+        if errno != 0 {
+            let m = format!("Couldn't flush data to {} ({})", DUMP_FILE, errno);
+            notify(k, &m);
+            return;
+        }
+    }
+
     drop(fd);
 
     // Notify the user.
