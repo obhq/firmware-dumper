@@ -26,7 +26,7 @@ jobs:
       env:
         RUSTFLAGS: --cfg fw="1100"
     - name: Lint obfw
-      run: cargo clippy --package obfw --all-features -- -D warnings
+      run: cargo clippy --package obfw --all-features --no-deps -- -D warnings
     - name: Build Payload
       run: ./build.py
     - name: Upload Payload
