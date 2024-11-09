@@ -108,7 +108,7 @@ fn run<K: Kernel>(k: K) {
         let lock = unsafe { MtxLock::new(k, (*mp).mtx()) };
 
         ok = if unsafe { (*mp).flags() & K::MNT_RDONLY != 0 } {
-            unsafe { dump_mount(mp, lock) }
+            unsafe { dump_mount(k, fd.as_raw_fd(), mp, lock) }
         } else {
             drop(lock);
             true
@@ -150,7 +150,16 @@ fn run<K: Kernel>(k: K) {
     }
 }
 
-unsafe fn dump_mount<K: Kernel>(_: *mut K::Mount, _: MtxLock<K>) -> bool {
+unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, _: *mut K::Mount, _: MtxLock<K>) -> bool {
+    // Write header.
+    if !write_dump(
+        k,
+        fd,
+        core::slice::from_ref(&FirmwareDump::<()>::ITEM_PARTITION),
+    ) {
+        return false;
+    }
+
     true
 }
 
