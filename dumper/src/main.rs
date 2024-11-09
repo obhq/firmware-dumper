@@ -220,4 +220,4 @@ struct OrbisNotificationRequest {
 
 #[global_allocator]
 static ALLOCATOR: Allocator<kernel!()> = Allocator::new();
-static DUMP_FILE: &'static str = "/mnt/usb0/firmware.obf";
+static DUMP_FILE: &str = "/mnt/usb0/firmware.obf";
