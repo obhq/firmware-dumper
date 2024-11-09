@@ -16,9 +16,8 @@ pub struct FirmwareDump<F> {
 
 impl<F> FirmwareDump<F> {
     pub const MAGIC: &'static [u8; 4] = b"\x7FOBF";
-
-    const ITEM_END: u8 = 0;
-    const ITEM_PARTITION: u8 = 1;
+    pub const ITEM_END: u8 = 0;
+    pub const ITEM_PARTITION: u8 = 1;
 
     pub fn new(file: F) -> Self {
         Self { file }

@@ -130,27 +130,36 @@ fn run<K: Kernel>(k: K) {
 
     unsafe { k.mtx_unlock_flags(mtx.ptr(), 0, c"".as_ptr(), 0) };
 
-    // Flush data.
-    if ok {
-        let td = K::Pcpu::curthread();
-        let errno = unsafe { k.kern_fsync(td, fd.as_raw_fd(), 1) };
-
-        if errno != 0 {
-            let m = format!("Couldn't flush data to {} ({})", DUMP_FILE, errno);
-            notify(k, &m);
-            return;
-        }
+    if !ok {
+        return;
     }
 
-    drop(fd);
+    // Write end entry.
+    if !write_dump(
+        k,
+        fd.as_raw_fd(),
+        core::slice::from_ref(&FirmwareDump::<()>::ITEM_END),
+    ) {
+        return;
+    }
+
+    // Flush data.
+    let td = K::Pcpu::curthread();
+    let errno = unsafe { k.kern_fsync(td, fd.as_raw_fd(), 1) };
+
+    if errno != 0 {
+        let m = format!("Couldn't flush data to {} ({})", DUMP_FILE, errno);
+        notify(k, &m);
+        return;
+    }
 
     // Notify the user.
-    if ok {
-        notify(k, "Dump completed!");
-    }
+    notify(k, "Dump completed!");
 }
 
-unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, _: *mut K::Mount, _: MtxLock<K>) -> bool {
+unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, _: *mut K::Mount, lock: MtxLock<K>) -> bool {
+    drop(lock);
+
     // Write header.
     if !write_dump(
         k,
