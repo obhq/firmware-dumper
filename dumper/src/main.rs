@@ -5,13 +5,13 @@ use alloc::ffi::CString;
 use alloc::format;
 use core::arch::global_asm;
 use core::cmp::min;
-use core::ffi::c_int;
+use core::ffi::{c_int, CStr};
 use core::mem::zeroed;
 use core::panic::PanicInfo;
 use obfw::FirmwareDump;
 use okf::fd::{openat, write_all, OpenFlags, AT_FDCWD};
 use okf::lock::MtxLock;
-use okf::mount::Mount;
+use okf::mount::{Filesystem, Mount};
 use okf::pcpu::Pcpu;
 use okf::uio::UioSeg;
 use okf::{kernel, Allocator, Kernel};
@@ -157,8 +157,16 @@ fn run<K: Kernel>(k: K) {
     notify(k, "Dump completed!");
 }
 
-unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, _: *mut K::Mount, lock: MtxLock<K>) -> bool {
+unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLock<K>) -> bool {
     drop(lock);
+
+    // Check filesystem type.
+    let fs = (*mp).fs();
+    let name = CStr::from_ptr((*fs).name()).to_bytes();
+
+    if !matches!(name, b"exfatfs" | b"ufs") {
+        return true;
+    }
 
     // Write header.
     if !write_dump(
