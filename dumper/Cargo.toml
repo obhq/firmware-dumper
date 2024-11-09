@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+obfw = { path = "../obfw" }
 okf = { git = "https://github.com/obhq/kernel-framework.git" }
 
 [target.'cfg(fw = "1100")'.dependencies]

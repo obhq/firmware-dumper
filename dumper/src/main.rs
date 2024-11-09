@@ -1,12 +1,14 @@
 #![no_std]
 #![no_main]
 
+use alloc::ffi::CString;
 use alloc::format;
 use core::arch::global_asm;
 use core::cmp::min;
 use core::ffi::c_int;
 use core::mem::zeroed;
 use core::panic::PanicInfo;
+use obfw::FirmwareDump;
 use okf::fd::{openat, write_all, OpenFlags, AT_FDCWD};
 use okf::lock::MtxLock;
 use okf::mount::Mount;
@@ -72,18 +74,21 @@ extern "C" fn main(_: *const u8) {
 
 fn run<K: Kernel>(k: K) {
     // Create dump file.
-    let path = c"/mnt/usb0/firmware.obf";
+    let path = unsafe { CString::from_vec_unchecked(DUMP_FILE.as_bytes().to_vec()) };
     let flags = OpenFlags::O_WRONLY | OpenFlags::O_CREAT | OpenFlags::O_TRUNC;
     let fd = match unsafe { openat(k, AT_FDCWD, path.as_ptr(), UioSeg::Kernel, flags, 0o777) } {
         Ok(v) => v,
         Err(e) => {
-            notify(
-                k,
-                &format!("Could not open /mnt/usb0/firmware.obf ({})", c_int::from(e)),
-            );
+            let m = format!("Could not open {} ({})", DUMP_FILE, c_int::from(e));
+            notify(k, &m);
             return;
         }
     };
+
+    // Write magic.
+    if !write_dump(k, fd.as_raw_fd(), FirmwareDump::<()>::MAGIC) {
+        return;
+    }
 
     // Lock mount list.
     let mtx = k.var(K::MOUNTLIST_MTX);
@@ -93,6 +98,7 @@ fn run<K: Kernel>(k: K) {
     // Dump all read-only mounts.
     let list = k.var(K::MOUNTLIST);
     let mut mp = unsafe { (*list.ptr()).first };
+    let mut ok = true;
 
     while !mp.is_null() {
         // vfs_busy always success without MBF_NOWAIT.
@@ -101,11 +107,12 @@ fn run<K: Kernel>(k: K) {
         // Check if read-only.
         let lock = unsafe { MtxLock::new(k, (*mp).mtx()) };
 
-        if unsafe { (*mp).flags() & K::MNT_RDONLY != 0 } {
-            unsafe { dump_mount(mp, lock) };
+        ok = if unsafe { (*mp).flags() & K::MNT_RDONLY != 0 } {
+            unsafe { dump_mount(mp, lock) }
         } else {
             drop(lock);
-        }
+            true
+        };
 
         // vfs_busy with MBF_MNTLSTLOCK will unlock before return so we need to re-acquire the lock.
         unsafe { k.mtx_lock_flags(mtx.ptr(), 0, c"".as_ptr(), 0) };
@@ -114,6 +121,10 @@ fn run<K: Kernel>(k: K) {
         // try to access the next mount point.
         unsafe { k.vfs_unbusy(mp) };
 
+        if !ok {
+            break;
+        }
+
         mp = unsafe { (*mp).entry().next };
     }
 
@@ -121,11 +132,30 @@ fn run<K: Kernel>(k: K) {
     drop(fd);
 
     // Notify the user.
-    notify(k, "Dump completed!");
+    if ok {
+        notify(k, "Dump completed!");
+    }
 }
 
-unsafe fn dump_mount<K: Kernel>(_: *mut K::Mount, _: MtxLock<K>) {}
+unsafe fn dump_mount<K: Kernel>(_: *mut K::Mount, _: MtxLock<K>) -> bool {
+    true
+}
 
+#[inline(never)]
+fn write_dump<K: Kernel>(k: K, fd: c_int, data: &[u8]) -> bool {
+    let td = K::Pcpu::curthread();
+
+    match unsafe { write_all(k, fd, data, UioSeg::Kernel, td) } {
+        Ok(_) => true,
+        Err(e) => {
+            let m = format!("Could not write {} ({})", DUMP_FILE, c_int::from(e));
+            notify(k, &m);
+            false
+        }
+    }
+}
+
+#[inline(never)]
 fn notify<K: Kernel>(k: K, msg: &str) {
     // Open notification device.
     let devs = [c"/dev/notification0", c"/dev/notification1"];
@@ -190,3 +220,4 @@ struct OrbisNotificationRequest {
 
 #[global_allocator]
 static ALLOCATOR: Allocator<kernel!()> = Allocator::new();
+static DUMP_FILE: &'static str = "/mnt/usb0/firmware.obf";
