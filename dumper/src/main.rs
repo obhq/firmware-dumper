@@ -187,7 +187,7 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
     let stats = (*mp).stats();
     let path = CStr::from_ptr((*stats).mounted_from()).to_bytes();
 
-    if !write_dump(k, fd, &path.len().to_le_bytes()) || write_dump(k, fd, path) {
+    if !write_dump(k, fd, &path.len().to_le_bytes()) || !write_dump(k, fd, path) {
         return false;
     }
 
