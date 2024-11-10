@@ -6,12 +6,13 @@ use alloc::format;
 use core::arch::global_asm;
 use core::cmp::min;
 use core::ffi::{c_int, CStr};
+use core::hint::unreachable_unchecked;
 use core::mem::zeroed;
 use core::panic::PanicInfo;
 use obfw::FirmwareDump;
 use okf::fd::{openat, write_all, OpenFlags, AT_FDCWD};
 use okf::lock::MtxLock;
-use okf::mount::{Filesystem, FsStats, Mount};
+use okf::mount::{Filesystem, FsOps, FsStats, Mount};
 use okf::pcpu::Pcpu;
 use okf::uio::UioSeg;
 use okf::{kernel, Allocator, Kernel};
@@ -162,11 +163,18 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
 
     // Check filesystem type.
     let fs = (*mp).fs();
-    let name = CStr::from_ptr((*fs).name()).to_bytes();
+    let fs = CStr::from_ptr((*fs).name()).to_bytes();
 
-    if !matches!(name, b"exfatfs" | b"ufs") {
+    if !matches!(fs, b"exfatfs" | b"ufs") {
         return true;
     }
+
+    // All interested partition should have mounted from as a valid UTF-8.
+    let stats = (*mp).stats();
+    let path = match CStr::from_ptr((*stats).mounted_from()).to_str() {
+        Ok(v) => v,
+        Err(_) => return true,
+    };
 
     // Write entry type.
     if !write_dump(k, fd, &[FirmwareDump::<()>::ITEM_PARTITION]) {
@@ -179,17 +187,25 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
     }
 
     // Write filesystem type.
-    if !write_dump(k, fd, &name.len().to_le_bytes()) || !write_dump(k, fd, name) {
+    if !write_dump(k, fd, &fs.len().to_le_bytes()) || !write_dump(k, fd, fs) {
         return false;
     }
 
     // Write mounted from.
-    let stats = (*mp).stats();
-    let path = CStr::from_ptr((*stats).mounted_from()).to_bytes();
-
-    if !write_dump(k, fd, &path.len().to_le_bytes()) || !write_dump(k, fd, path) {
+    if !write_dump(k, fd, &path.len().to_le_bytes()) || !write_dump(k, fd, path.as_bytes()) {
         return false;
     }
+
+    // Get root vnode.
+    let vp = match (*mp).ops().root(mp, K::LK_SHARED) {
+        Ok(v) => v,
+        Err(e) => {
+            notify(k, &format!("Couldn't get root vnode of {} ({})", path, e));
+            return false;
+        }
+    };
+
+    k.vput(vp);
 
     true
 }
@@ -201,7 +217,7 @@ fn write_dump<K: Kernel>(k: K, fd: c_int, data: &[u8]) -> bool {
     match unsafe { write_all(k, fd, data, UioSeg::Kernel, td) } {
         Ok(_) => true,
         Err(e) => {
-            let m = format!("Could not write {} ({})", DUMP_FILE, c_int::from(e));
+            let m = format!("Couldn't write {} ({})", DUMP_FILE, c_int::from(e));
             notify(k, &m);
             false
         }
@@ -248,7 +264,7 @@ fn notify<K: Kernel>(k: K, msg: &str) {
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
     // Nothing to do here since we enabled panic_immediate_abort.
-    loop {}
+    unsafe { unreachable_unchecked() };
 }
 
 /// By OSM-Made.
