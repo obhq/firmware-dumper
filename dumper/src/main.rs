@@ -1,20 +1,24 @@
 #![no_std]
 #![no_main]
 
+use alloc::collections::vec_deque::VecDeque;
 use alloc::ffi::CString;
 use alloc::format;
 use core::arch::global_asm;
 use core::cmp::min;
 use core::ffi::{c_int, CStr};
 use core::hint::unreachable_unchecked;
-use core::mem::zeroed;
+use core::mem::{zeroed, MaybeUninit};
 use core::panic::PanicInfo;
+use core::ptr::null_mut;
 use obfw::FirmwareDump;
 use okf::fd::{openat, write_all, OpenFlags, AT_FDCWD};
 use okf::lock::MtxLock;
 use okf::mount::{Filesystem, FsOps, FsStats, Mount};
 use okf::pcpu::Pcpu;
-use okf::uio::UioSeg;
+use okf::thread::Thread;
+use okf::uio::{IoVec, Uio, UioSeg};
+use okf::vnode::{DirEnt, Vnode, VopReadDir};
 use okf::{kernel, Allocator, Kernel};
 
 extern crate alloc;
@@ -205,16 +209,91 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
         }
     };
 
-    k.vput(vp);
+    // Dump all vnodes.
+    let mut dirs = VecDeque::from([vp]);
+
+    while let Some(vp) = dirs.pop_front() {
+        // Check type.
+        let ty = (*vp).ty();
+        let ok = if ty == K::VDIR {
+            list_files(k, vp)
+        } else {
+            let m = format!("Unknown vnode {ty}");
+            notify(k, &m);
+            false
+        };
+
+        // Release vnode.
+        k.vput(vp);
+
+        if !ok {
+            return false;
+        }
+    }
 
     true
+}
+
+unsafe fn list_files<K: Kernel>(k: K, vp: *mut K::Vnode) -> bool {
+    let td = K::Pcpu::curthread();
+    let mut off = 0;
+
+    loop {
+        // Setup output buffer.
+        let mut buf = MaybeUninit::<DirEnt<256>>::uninit();
+        let mut vec = IoVec {
+            ptr: buf.as_mut_ptr().cast(),
+            len: size_of_val(&buf),
+        };
+
+        // Setup argument.
+        let mut io = Uio::read(&mut vec, off, td).unwrap();
+        let mut eof = MaybeUninit::uninit();
+        let mut args = VopReadDir::new(
+            k,
+            vp,
+            &mut io,
+            (*td).cred(),
+            eof.as_mut_ptr(),
+            null_mut(),
+            null_mut(),
+        );
+
+        // Read entry.
+        let errno = k.vop_readdir((*vp).ops(), &mut args);
+
+        if errno != 0 {
+            let m = format!("Couldn't read directory entry ({errno})");
+            notify(k, &m);
+            break false;
+        }
+
+        off = io.offset().try_into().unwrap();
+
+        // Parse entries.
+        let len = size_of_val(&buf) - usize::try_from(io.remaining()).unwrap();
+        let mut buf = core::slice::from_raw_parts::<u8>(buf.as_ptr().cast(), len);
+
+        while !buf.is_empty() {
+            // Get entry and move to next one.
+            let ent = buf.as_ptr() as *const DirEnt<1>;
+            let len: usize = (*ent).len.into();
+
+            buf = &buf[len..];
+        }
+
+        // Stop if no more entries.
+        if eof.assume_init() != 0 {
+            break true;
+        }
+    }
 }
 
 #[inline(never)]
 fn write_dump<K: Kernel>(k: K, fd: c_int, data: &[u8]) -> bool {
     let td = K::Pcpu::curthread();
 
-    match unsafe { write_all(k, fd, data, UioSeg::Kernel, td) } {
+    match unsafe { write_all(k, fd, data, td) } {
         Ok(_) => true,
         Err(e) => {
             let m = format!("Couldn't write {} ({})", DUMP_FILE, c_int::from(e));
@@ -258,7 +337,7 @@ fn notify<K: Kernel>(k: K, msg: &str) {
     let data = unsafe { core::slice::from_raw_parts(data, len) };
     let td = K::Pcpu::curthread();
 
-    unsafe { write_all(k, fd.as_raw_fd(), data, UioSeg::Kernel, td).ok() };
+    unsafe { write_all(k, fd.as_raw_fd(), data, td).ok() };
 }
 
 #[panic_handler]
