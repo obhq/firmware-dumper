@@ -15,10 +15,11 @@ use obfw::FirmwareDump;
 use okf::fd::{openat, write_all, OpenFlags, AT_FDCWD};
 use okf::lock::MtxLock;
 use okf::mount::{Filesystem, FsOps, FsStats, Mount};
+use okf::namei::ComponentName;
 use okf::pcpu::Pcpu;
 use okf::thread::Thread;
 use okf::uio::{IoVec, Uio, UioSeg};
-use okf::vnode::{DirEnt, Vnode, VopReadDir};
+use okf::vnode::{DirEnt, Vnode, VopLookup, VopReadDir};
 use okf::{kernel, Allocator, Kernel};
 
 extern crate alloc;
@@ -265,28 +266,56 @@ unsafe fn list_files<K: Kernel>(k: K, vp: *mut K::Vnode) -> bool {
         if errno != 0 {
             let m = format!("Couldn't read directory entry ({errno})");
             notify(k, &m);
-            break false;
+            return false;
         }
 
         off = io.offset().try_into().unwrap();
 
         // Parse entries.
         let len = size_of_val(&buf) - usize::try_from(io.remaining()).unwrap();
-        let mut buf = core::slice::from_raw_parts::<u8>(buf.as_ptr().cast(), len);
+        let mut buf = core::slice::from_raw_parts_mut::<u8>(buf.as_mut_ptr().cast(), len);
 
         while !buf.is_empty() {
             // Get entry and move to next one.
-            let ent = buf.as_ptr() as *const DirEnt<1>;
+            let ent = buf.as_mut_ptr() as *mut DirEnt<1>;
             let len: usize = (*ent).len.into();
 
-            buf = &buf[len..];
+            buf = &mut buf[len..];
+
+            // Skip "." and "..".
+            let len = (*ent).name_len.into();
+            let name = core::slice::from_raw_parts::<u8>((*ent).name.as_ptr().cast(), len);
+
+            if matches!(name, b"." | b"..") {
+                continue;
+            }
+
+            // Lookup.
+            let mut child = MaybeUninit::uninit();
+            let name = (*ent).name.as_mut_ptr();
+            let mut cn = ComponentName::new(k, K::LOOKUP, K::LK_SHARED, name, td);
+            let mut args = VopLookup::new(k, vp, child.as_mut_ptr(), &mut cn);
+            let errno = k.vop_lookup((*vp).ops(), &mut args);
+
+            if errno != 0 {
+                let m = format!("Couldn't lookup a child ({errno})");
+                notify(k, &m);
+                return false;
+            }
+
+            // Keep vnode.
+            let child = child.assume_init();
+
+            k.vput(child);
         }
 
         // Stop if no more entries.
         if eof.assume_init() != 0 {
-            break true;
+            break;
         }
     }
+
+    true
 }
 
 #[inline(never)]
