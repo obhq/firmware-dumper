@@ -2,7 +2,6 @@
 #![no_main]
 
 use alloc::collections::vec_deque::VecDeque;
-use alloc::ffi::CString;
 use alloc::format;
 use core::arch::global_asm;
 use core::cmp::min;
@@ -80,13 +79,12 @@ extern "C" fn main(_: *const u8) {
 
 fn run<K: Kernel>(k: K) {
     // Create dump file.
-    let path = unsafe { CString::from_vec_unchecked(DUMP_FILE.as_bytes().to_vec()) };
+    let path = c"/mnt/usb0/firmware.obf";
     let flags = OpenFlags::O_WRONLY | OpenFlags::O_CREAT | OpenFlags::O_TRUNC;
     let fd = match unsafe { openat(k, AT_FDCWD, path.as_ptr(), UioSeg::Kernel, flags, 0o777) } {
         Ok(v) => v,
-        Err(e) => {
-            let m = format!("Could not open {} ({})", DUMP_FILE, c_int::from(e));
-            notify(k, &m);
+        Err(_) => {
+            notify(k, "Could not open dump file");
             return;
         }
     };
@@ -154,7 +152,7 @@ fn run<K: Kernel>(k: K) {
     let errno = unsafe { k.kern_fsync(td, fd.as_raw_fd(), 1) };
 
     if errno != 0 {
-        let m = format!("Couldn't flush data to {} ({})", DUMP_FILE, errno);
+        let m = format!("Couldn't flush dump file ({})", errno);
         notify(k, &m);
         return;
     }
@@ -211,23 +209,28 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
     };
 
     // Dump all vnodes.
-    let mut dirs = VecDeque::from([vp]);
+    let mut pending = VecDeque::from([vp]);
 
-    while let Some(vp) = dirs.pop_front() {
+    while let Some(vp) = pending.pop_front() {
         // Check type.
         let ty = (*vp).ty();
         let ok = if ty == K::VDIR {
-            list_files(k, vp)
+            list_files(k, vp, &mut pending)
         } else {
             let m = format!("Unknown vnode {ty}");
             notify(k, &m);
             false
         };
 
-        // Release vnode.
+        // Release current vnode.
         k.vput(vp);
 
         if !ok {
+            // Release all pending vnodes.
+            for vp in pending {
+                k.vput(vp);
+            }
+
             return false;
         }
     }
@@ -235,7 +238,11 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
     true
 }
 
-unsafe fn list_files<K: Kernel>(k: K, vp: *mut K::Vnode) -> bool {
+unsafe fn list_files<K: Kernel>(
+    k: K,
+    vp: *mut K::Vnode,
+    pending: &mut VecDeque<*mut K::Vnode>,
+) -> bool {
     let td = K::Pcpu::curthread();
     let mut off = 0;
 
@@ -304,9 +311,7 @@ unsafe fn list_files<K: Kernel>(k: K, vp: *mut K::Vnode) -> bool {
             }
 
             // Keep vnode.
-            let child = child.assume_init();
-
-            k.vput(child);
+            pending.push_back(child.assume_init());
         }
 
         // Stop if no more entries.
@@ -325,7 +330,7 @@ fn write_dump<K: Kernel>(k: K, fd: c_int, data: &[u8]) -> bool {
     match unsafe { write_all(k, fd, data, td) } {
         Ok(_) => true,
         Err(e) => {
-            let m = format!("Couldn't write {} ({})", DUMP_FILE, c_int::from(e));
+            let m = format!("Couldn't write dump file ({})", e);
             notify(k, &m);
             false
         }
@@ -397,4 +402,3 @@ struct OrbisNotificationRequest {
 
 #[global_allocator]
 static ALLOCATOR: Allocator<kernel!()> = Allocator::new();
-static DUMP_FILE: &str = "/mnt/usb0/firmware.obf";

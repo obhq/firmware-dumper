@@ -24,7 +24,7 @@ version = "0.1.0"
 [[package]]
 name = "okf"
 version = "0.1.0"
-source = "git+https://github.com/obhq/kernel-framework.git#25391014cfaa60728dd8ffed101276021c25b9c3"
+source = "git+https://github.com/obhq/kernel-framework.git#9f31f96673a36bdfbb0ad8b825f8c59ca2b895a5"
 dependencies = [
  "bitflags",
  "okf-macros",
@@ -33,7 +33,7 @@ dependencies = [
 [[package]]
 name = "okf-1100"
 version = "0.1.0"
-source = "git+https://github.com/obhq/kernel-framework.git#25391014cfaa60728dd8ffed101276021c25b9c3"
+source = "git+https://github.com/obhq/kernel-framework.git#9f31f96673a36bdfbb0ad8b825f8c59ca2b895a5"
 dependencies = [
  "okf",
 ]
@@ -41,7 +41,7 @@ dependencies = [
 [[package]]
 name = "okf-macros"
 version = "0.1.0"
-source = "git+https://github.com/obhq/kernel-framework.git#25391014cfaa60728dd8ffed101276021c25b9c3"
+source = "git+https://github.com/obhq/kernel-framework.git#9f31f96673a36bdfbb0ad8b825f8c59ca2b895a5"
 dependencies = [
  "proc-macro2",
  "quote",
