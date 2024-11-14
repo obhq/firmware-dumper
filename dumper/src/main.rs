@@ -2,7 +2,7 @@
 #![no_main]
 
 use alloc::collections::vec_deque::VecDeque;
-use alloc::format;
+use alloc::{format, vec};
 use core::arch::global_asm;
 use core::cmp::min;
 use core::ffi::{c_int, CStr};
@@ -18,7 +18,7 @@ use okf::namei::ComponentName;
 use okf::pcpu::Pcpu;
 use okf::thread::Thread;
 use okf::uio::{IoVec, Uio, UioSeg};
-use okf::vnode::{DirEnt, Vnode, VopLookup, VopReadDir};
+use okf::vnode::{DirEnt, Vnode, VopLookup, VopRead, VopReadDir};
 use okf::{kernel, Allocator, Kernel};
 
 extern crate alloc;
@@ -152,8 +152,7 @@ fn run<K: Kernel>(k: K) {
     let errno = unsafe { k.kern_fsync(td, fd.as_raw_fd(), 1) };
 
     if errno != 0 {
-        let m = format!("Couldn't flush dump file ({})", errno);
-        notify(k, &m);
+        notify(k, "Couldn't flush dump file");
         return;
     }
 
@@ -174,10 +173,7 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
 
     // All interested partition should have mounted from as a valid UTF-8.
     let stats = (*mp).stats();
-    let path = match CStr::from_ptr((*stats).mounted_from()).to_str() {
-        Ok(v) => v,
-        Err(_) => return true,
-    };
+    let path = CStr::from_ptr((*stats).mounted_from()).to_bytes();
 
     // Write entry type.
     if !write_dump(k, fd, &[FirmwareDump::<()>::ITEM_PARTITION]) {
@@ -195,15 +191,15 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
     }
 
     // Write mounted from.
-    if !write_dump(k, fd, &path.len().to_le_bytes()) || !write_dump(k, fd, path.as_bytes()) {
+    if !write_dump(k, fd, &path.len().to_le_bytes()) || !write_dump(k, fd, path) {
         return false;
     }
 
     // Get root vnode.
     let vp = match (*mp).ops().root(mp, K::LK_SHARED) {
         Ok(v) => v,
-        Err(e) => {
-            notify(k, &format!("Couldn't get root vnode of {} ({})", path, e));
+        Err(_) => {
+            notify(k, "Couldn't get root vnode");
             return false;
         }
     };
@@ -216,6 +212,8 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
         let ty = (*vp).ty();
         let ok = if ty == K::VDIR {
             list_files(k, vp, &mut pending)
+        } else if ty == K::VREG {
+            dump_file(k, vp)
         } else {
             let m = format!("Unknown vnode {ty}");
             notify(k, &m);
@@ -316,6 +314,41 @@ unsafe fn list_files<K: Kernel>(
 
         // Stop if no more entries.
         if eof.assume_init() != 0 {
+            break;
+        }
+    }
+
+    true
+}
+
+unsafe fn dump_file<K: Kernel>(k: K, vp: *mut K::Vnode) -> bool {
+    let td = K::Pcpu::curthread();
+    let mut buf = vec![0; 0x4000];
+    let mut off = 0;
+
+    loop {
+        // Setup output buffer.
+        let mut vec = IoVec {
+            ptr: buf.as_mut_ptr(),
+            len: buf.len(),
+        };
+
+        // Read.
+        let mut io = Uio::read(&mut vec, off, td).unwrap();
+        let mut args = VopRead::new(k, vp, &mut io, 0, (*td).cred());
+        let errno = k.vop_read((*vp).ops(), &mut args);
+
+        if errno != 0 {
+            notify(k, "Couldn't read a file");
+            return false;
+        }
+
+        off = io.offset().try_into().unwrap();
+
+        // Check if EOF.
+        let len = buf.len() - usize::try_from(io.remaining()).unwrap();
+
+        if len == 0 {
             break;
         }
     }
