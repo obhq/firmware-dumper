@@ -226,14 +226,12 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
         };
 
         // Write type and path.
-        if !p.path.is_empty() {
-            if !write_dump(k, fd, &[ty.into()]) {
-                return false;
-            }
+        if !write_dump(k, fd, &[ty.into()]) {
+            return false;
+        }
 
-            if !write_dump(k, fd, &p.path) {
-                return false;
-            }
+        if !write_dump(k, fd, &p.path.len().to_le_bytes()) || !write_dump(k, fd, &p.path) {
+            return false;
         }
 
         // Dump.
