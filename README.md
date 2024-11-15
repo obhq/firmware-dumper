@@ -4,7 +4,7 @@ This is a kernel-mode payload to dump PS4 system files required by Obliteration.
 
 ## Setup
 
-Plug a USB drive to the PS4 and make sure the PS4 can write some files to it. You can test this by copy some game screenshots to it to see if it success without any errors.
+Plug a USB drive with free space at least 2 GB to the PS4 and make sure the PS4 can write some files to it. You can test this by copy some game screenshots to it to see if it success without any errors.
 
 ## Running
 
@@ -14,7 +14,7 @@ You need to use TheFloW [PPPwn](https://github.com/TheOfficialFloW/PPPwn) with `
 sudo python3 pppwn.py --interface=enp0s3 --fw=1100 --stage2=firmware-dumper.bin
 ```
 
-Wait for a notification `Dump completed!`. This can take up to 10 minutes depend on how fast is your USB drive then shutdown the PS4 (not putting it into rest mode). Once the PS4 completely shutdown unplug the USB drive to grab `firmware.obf`.
+Wait for a notification `Dump completed!`. This can take longer than 20 minutes depend on how fast is your USB drive and you need to keep your PS4 on until it is finished then shutdown the PS4 (not putting it into rest mode). Once the PS4 completely shutdown unplug the USB drive to grab `firmware.obf`.
 
 ## Building from source
 
