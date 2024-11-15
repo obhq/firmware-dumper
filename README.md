@@ -1,6 +1,6 @@
 # Firmware Dumper
 
-This is a kernel-mode payload to dump PS4 system files required by Obliteration. Only 11.00 is currently supported.
+This is a kernel-mode payload to dump PS4 system files required by Obliteration. Only 11.00 is currently supported. Please note that the current version is intended for **development use** only. You will need a new dump when we release Obliteration to the end-users.
 
 ## Setup
 
