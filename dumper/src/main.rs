@@ -238,7 +238,7 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
         let ok = match ty {
             PartItem::End => unreachable_unchecked(),
             PartItem::Directory => list_files(k, p, &mut pending),
-            PartItem::File => dump_file(k, p),
+            PartItem::File => dump_file(k, p, fd),
         };
 
         if !ok {
@@ -343,10 +343,15 @@ unsafe fn list_files<K: Kernel>(
     true
 }
 
-unsafe fn dump_file<K: Kernel>(k: K, p: PendingVnode<K>) -> bool {
+unsafe fn dump_file<K: Kernel>(k: K, p: PendingVnode<K>, fd: c_int) -> bool {
+    // Write block type.
+    if !write_dump(k, fd, &[0]) {
+        return false;
+    }
+
     // Dump data.
     let td = K::Pcpu::curthread();
-    let mut buf = vec![0; 0x4000];
+    let mut buf = vec![0; 0xFFFF]; // Maximum block size.
     let mut off = 0;
 
     loop {
@@ -374,9 +379,18 @@ unsafe fn dump_file<K: Kernel>(k: K, p: PendingVnode<K>) -> bool {
         if len == 0 {
             break;
         }
+
+        // Write dump.
+        let buf = &buf[..len];
+        let len: u16 = len.try_into().unwrap();
+
+        if !write_dump(k, fd, &len.to_le_bytes()) || !write_dump(k, fd, buf) {
+            return false;
+        }
     }
 
-    true
+    // Write empty block.
+    write_dump(k, fd, &0u16.to_le_bytes())
 }
 
 #[inline(never)]
