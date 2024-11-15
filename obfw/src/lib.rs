@@ -1,8 +1,9 @@
 #![no_std]
 
-mod io;
-
 pub use self::io::*;
+
+mod io;
+pub mod ps4;
 
 #[cfg(feature = "read")]
 extern crate alloc;

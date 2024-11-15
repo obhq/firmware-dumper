@@ -9,3 +9,4 @@ std = []
 write = []
 
 [dependencies]
+num_enum = { version = "0.7.3", default-features = false }

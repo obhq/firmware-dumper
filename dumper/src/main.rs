@@ -2,6 +2,7 @@
 #![no_main]
 
 use alloc::collections::vec_deque::VecDeque;
+use alloc::vec::Vec;
 use alloc::{format, vec};
 use core::arch::global_asm;
 use core::cmp::min;
@@ -10,6 +11,7 @@ use core::hint::unreachable_unchecked;
 use core::mem::{zeroed, MaybeUninit};
 use core::panic::PanicInfo;
 use core::ptr::null_mut;
+use obfw::ps4::PartItem;
 use obfw::FirmwareDump;
 use okf::fd::{openat, write_all, OpenFlags, AT_FDCWD};
 use okf::lock::MtxLock;
@@ -171,10 +173,6 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
         return true;
     }
 
-    // All interested partition should have mounted from as a valid UTF-8.
-    let stats = (*mp).stats();
-    let path = CStr::from_ptr((*stats).mounted_from()).to_bytes();
-
     // Write entry type.
     if !write_dump(k, fd, &[FirmwareDump::<()>::ITEM_PARTITION]) {
         return false;
@@ -191,7 +189,10 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
     }
 
     // Write mounted from.
-    if !write_dump(k, fd, &path.len().to_le_bytes()) || !write_dump(k, fd, path) {
+    let stats = (*mp).stats();
+    let dev = CStr::from_ptr((*stats).mounted_from()).to_bytes();
+
+    if !write_dump(k, fd, &dev.len().to_le_bytes()) || !write_dump(k, fd, dev) {
         return false;
     }
 
@@ -205,41 +206,56 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
     };
 
     // Dump all vnodes.
-    let mut pending = VecDeque::from([vp]);
+    let mut pending = VecDeque::from([PendingVnode {
+        k,
+        vnode: vp,
+        path: Vec::new(),
+    }]);
 
-    while let Some(vp) = pending.pop_front() {
-        // Check type.
-        let ty = (*vp).ty();
-        let ok = if ty == K::VDIR {
-            list_files(k, vp, &mut pending)
+    while let Some(p) = pending.pop_front() {
+        // Map type.
+        let ty = (*p.vnode).ty();
+        let ty = if ty == K::VDIR {
+            PartItem::Directory
         } else if ty == K::VREG {
-            dump_file(k, vp)
+            PartItem::File
         } else {
             let m = format!("Unknown vnode {ty}");
             notify(k, &m);
-            false
+            return false;
         };
 
-        // Release current vnode.
-        k.vput(vp);
-
-        if !ok {
-            // Release all pending vnodes.
-            for vp in pending {
-                k.vput(vp);
+        // Write type and path.
+        if !p.path.is_empty() {
+            if !write_dump(k, fd, &[ty.into()]) {
+                return false;
             }
 
+            if !write_dump(k, fd, &p.path) {
+                return false;
+            }
+        }
+
+        // Dump.
+        let ok = match ty {
+            PartItem::End => unreachable_unchecked(),
+            PartItem::Directory => list_files(k, p, &mut pending),
+            PartItem::File => dump_file(k, p),
+        };
+
+        if !ok {
             return false;
         }
     }
 
-    true
+    // Write end entry.
+    write_dump(k, fd, &[PartItem::End.into()])
 }
 
 unsafe fn list_files<K: Kernel>(
     k: K,
-    vp: *mut K::Vnode,
-    pending: &mut VecDeque<*mut K::Vnode>,
+    p: PendingVnode<K>,
+    pending: &mut VecDeque<PendingVnode<K>>,
 ) -> bool {
     let td = K::Pcpu::curthread();
     let mut off = 0;
@@ -257,7 +273,7 @@ unsafe fn list_files<K: Kernel>(
         let mut eof = MaybeUninit::uninit();
         let mut args = VopReadDir::new(
             k,
-            vp,
+            p.vnode,
             &mut io,
             (*td).cred(),
             eof.as_mut_ptr(),
@@ -266,11 +282,10 @@ unsafe fn list_files<K: Kernel>(
         );
 
         // Read entry.
-        let errno = k.vop_readdir((*vp).ops(), &mut args);
+        let errno = k.vop_readdir((*p.vnode).ops(), &mut args);
 
         if errno != 0 {
-            let m = format!("Couldn't read directory entry ({errno})");
-            notify(k, &m);
+            notify(k, "Couldn't read directory entry");
             return false;
         }
 
@@ -295,21 +310,30 @@ unsafe fn list_files<K: Kernel>(
                 continue;
             }
 
+            // Build path.
+            let mut path = p.path.clone();
+
+            path.push(b'/');
+            path.extend_from_slice(name);
+
             // Lookup.
             let mut child = MaybeUninit::uninit();
             let name = (*ent).name.as_mut_ptr();
             let mut cn = ComponentName::new(k, K::LOOKUP, K::LK_SHARED, name, td);
-            let mut args = VopLookup::new(k, vp, child.as_mut_ptr(), &mut cn);
-            let errno = k.vop_lookup((*vp).ops(), &mut args);
+            let mut args = VopLookup::new(k, p.vnode, child.as_mut_ptr(), &mut cn);
+            let errno = k.vop_lookup((*p.vnode).ops(), &mut args);
 
             if errno != 0 {
-                let m = format!("Couldn't lookup a child ({errno})");
-                notify(k, &m);
+                notify(k, "Couldn't lookup child vnode");
                 return false;
             }
 
             // Keep vnode.
-            pending.push_back(child.assume_init());
+            pending.push_back(PendingVnode {
+                k,
+                vnode: child.assume_init(),
+                path,
+            });
         }
 
         // Stop if no more entries.
@@ -321,7 +345,8 @@ unsafe fn list_files<K: Kernel>(
     true
 }
 
-unsafe fn dump_file<K: Kernel>(k: K, vp: *mut K::Vnode) -> bool {
+unsafe fn dump_file<K: Kernel>(k: K, p: PendingVnode<K>) -> bool {
+    // Dump data.
     let td = K::Pcpu::curthread();
     let mut buf = vec![0; 0x4000];
     let mut off = 0;
@@ -335,8 +360,8 @@ unsafe fn dump_file<K: Kernel>(k: K, vp: *mut K::Vnode) -> bool {
 
         // Read.
         let mut io = Uio::read(&mut vec, off, td).unwrap();
-        let mut args = VopRead::new(k, vp, &mut io, 0, (*td).cred());
-        let errno = k.vop_read((*vp).ops(), &mut args);
+        let mut args = VopRead::new(k, p.vnode, &mut io, 0, (*td).cred());
+        let errno = k.vop_read((*p.vnode).ops(), &mut args);
 
         if errno != 0 {
             notify(k, "Couldn't read a file");
@@ -362,9 +387,8 @@ fn write_dump<K: Kernel>(k: K, fd: c_int, data: &[u8]) -> bool {
 
     match unsafe { write_all(k, fd, data, td) } {
         Ok(_) => true,
-        Err(e) => {
-            let m = format!("Couldn't write dump file ({})", e);
-            notify(k, &m);
+        Err(_) => {
+            notify(k, "Couldn't write dump file");
             false
         }
     }
@@ -411,6 +435,18 @@ fn notify<K: Kernel>(k: K, msg: &str) {
 fn panic(_: &PanicInfo) -> ! {
     // Nothing to do here since we enabled panic_immediate_abort.
     unsafe { unreachable_unchecked() };
+}
+
+struct PendingVnode<K: Kernel> {
+    k: K,
+    vnode: *mut K::Vnode,
+    path: Vec<u8>,
+}
+
+impl<K: Kernel> Drop for PendingVnode<K> {
+    fn drop(&mut self) {
+        unsafe { self.k.vput(self.vnode) };
+    }
 }
 
 /// By OSM-Made.
