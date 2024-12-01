@@ -24,7 +24,7 @@ impl<F: Read> DumpReader<F> {
         Ok(Self(file))
     }
 
-    pub fn next(&mut self) -> Result<Option<ItemReader<F>>, ReaderError> {
+    pub fn next_item(&mut self) -> Result<Option<ItemReader<F>>, ReaderError> {
         // Read item type.
         let mut ty = 0u8;
 

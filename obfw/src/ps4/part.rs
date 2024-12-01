@@ -28,7 +28,7 @@ impl<'a, F: Read> PartReader<'a, F> {
         &self.dev
     }
 
-    pub fn next(&mut self) -> Result<Option<PartData>, PartError> {
+    pub fn next_item(&mut self) -> Result<Option<PartData>, PartError> {
         // Read item type.
         let mut ty = 0;
 

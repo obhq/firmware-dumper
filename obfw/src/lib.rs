@@ -14,7 +14,7 @@ mod reader;
 #[cfg(feature = "read")]
 extern crate std;
 
-pub const MAGIC: &'static [u8; 4] = b"\x7FOBF";
+pub const MAGIC: &[u8; 4] = b"\x7FOBF";
 
 /// Type of top-level item in the dump file.
 #[repr(u8)]
