@@ -12,7 +12,7 @@ use core::mem::{zeroed, MaybeUninit};
 use core::panic::PanicInfo;
 use core::ptr::null_mut;
 use obfw::ps4::PartItem;
-use obfw::FirmwareDump;
+use obfw::{DumpItem, MAGIC};
 use okf::fd::{openat, write_all, OpenFlags, AT_FDCWD};
 use okf::lock::MtxLock;
 use okf::mount::{Filesystem, FsOps, FsStats, Mount};
@@ -92,7 +92,7 @@ fn run<K: Kernel>(k: K) {
     };
 
     // Write magic.
-    if !write_dump(k, fd.as_raw_fd(), FirmwareDump::<()>::MAGIC) {
+    if !write_dump(k, fd.as_raw_fd(), MAGIC) {
         return;
     }
 
@@ -141,11 +141,7 @@ fn run<K: Kernel>(k: K) {
     }
 
     // Write end entry.
-    if !write_dump(
-        k,
-        fd.as_raw_fd(),
-        core::slice::from_ref(&FirmwareDump::<()>::ITEM_END),
-    ) {
+    if !write_dump(k, fd.as_raw_fd(), &[DumpItem::End.into()]) {
         return;
     }
 
@@ -174,7 +170,7 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
     }
 
     // Write entry type.
-    if !write_dump(k, fd, &[FirmwareDump::<()>::ITEM_PARTITION]) {
+    if !write_dump(k, fd, &[DumpItem::Ps4Part.into()]) {
         return false;
     }
 
@@ -443,7 +439,8 @@ fn notify<K: Kernel>(k: K, msg: &str) {
     unsafe { write_all(k, fd.as_raw_fd(), data, td).ok() };
 }
 
-#[panic_handler]
+#[allow(dead_code)]
+#[cfg_attr(target_os = "none", panic_handler)]
 fn panic(_: &PanicInfo) -> ! {
     // Nothing to do here since we enabled panic_immediate_abort.
     unsafe { unreachable_unchecked() };

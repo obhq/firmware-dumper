@@ -1,4 +1,10 @@
+#[cfg(feature = "read")]
+pub use self::part::*;
+
 use num_enum::{IntoPrimitive, TryFromPrimitive};
+
+#[cfg(feature = "read")]
+mod part;
 
 /// Type of item in the partition dump.
 #[repr(u8)]
