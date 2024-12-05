@@ -1,5 +1,6 @@
 use crate::{DumpItem, MAGIC};
 use core::error::Error;
+use core::fmt::{Display, Formatter};
 use std::boxed::Box;
 use std::io::{ErrorKind, Read};
 use thiserror::Error;
@@ -56,6 +57,16 @@ impl<F: Read> DumpReader<F> {
 /// Encapsulates a reader for dump item.
 pub enum ItemReader<'a, F> {
     Ps4Part(crate::ps4::PartReader<'a, F>),
+}
+
+impl<'a, F> Display for ItemReader<'a, F> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        let name = match self {
+            Self::Ps4Part(_) => "PlayStation 4 partition",
+        };
+
+        f.write_str(name)
+    }
 }
 
 /// Represents an error when [`DumpReader`] fails to read the dump.
