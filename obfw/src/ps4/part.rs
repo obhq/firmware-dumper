@@ -6,6 +6,7 @@ use std::vec::Vec;
 use thiserror::Error;
 
 /// Provides methods to read PlayStation 4 partition dump.
+#[derive(Debug)]
 pub struct PartReader<'a, F> {
     dump: &'a mut F,
     fs: Vec<u8>,

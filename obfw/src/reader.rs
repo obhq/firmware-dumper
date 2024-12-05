@@ -55,6 +55,7 @@ impl<F: Read> DumpReader<F> {
 }
 
 /// Encapsulates a reader for dump item.
+#[derive(Debug)]
 pub enum ItemReader<'a, F> {
     Ps4Part(crate::ps4::PartReader<'a, F>),
 }
