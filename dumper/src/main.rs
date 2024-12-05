@@ -92,7 +92,9 @@ fn run<K: Kernel>(k: K) {
     };
 
     // Write magic.
-    if !write_dump(k, fd.as_raw_fd(), MAGIC) {
+    let fd = fd.as_raw_fd();
+
+    if !write_dump(k, fd, MAGIC) {
         return;
     }
 
@@ -104,6 +106,7 @@ fn run<K: Kernel>(k: K) {
     // Dump all read-only mounts.
     let list = k.var(K::MOUNTLIST);
     let mut mp = unsafe { (*list.ptr()).first };
+    let mut items = 0u32;
     let mut ok = true;
 
     while !mp.is_null() {
@@ -112,12 +115,19 @@ fn run<K: Kernel>(k: K) {
 
         // Check if read-only.
         let lock = unsafe { MtxLock::new(k, (*mp).mtx()) };
-
-        ok = if unsafe { (*mp).flags() & K::MNT_RDONLY != 0 } {
-            unsafe { dump_mount(k, fd.as_raw_fd(), mp, lock) }
+        let r = if unsafe { (*mp).flags() & K::MNT_RDONLY != 0 } {
+            unsafe { dump_mount(k, fd, mp, lock) }
         } else {
             drop(lock);
-            true
+            Some(0)
+        };
+
+        ok = match r {
+            Some(v) => {
+                items += v;
+                true
+            }
+            None => false,
         };
 
         // vfs_busy with MBF_MNTLSTLOCK will unlock before return so we need to re-acquire the lock.
@@ -141,13 +151,13 @@ fn run<K: Kernel>(k: K) {
     }
 
     // Write end entry.
-    if !write_dump(k, fd.as_raw_fd(), &[DumpItem::End.into()]) {
+    if !write_dump(k, fd, &[DumpItem::End.into()]) || !write_dump(k, fd, &items.to_le_bytes()) {
         return;
     }
 
     // Flush data.
     let td = K::Pcpu::curthread();
-    let errno = unsafe { k.kern_fsync(td, fd.as_raw_fd(), 1) };
+    let errno = unsafe { k.kern_fsync(td, fd, 1) };
 
     if errno != 0 {
         notify(k, "Couldn't flush dump file");
@@ -158,7 +168,12 @@ fn run<K: Kernel>(k: K) {
     notify(k, "Dump completed!");
 }
 
-unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLock<K>) -> bool {
+unsafe fn dump_mount<K: Kernel>(
+    k: K,
+    fd: c_int,
+    mp: *mut K::Mount,
+    lock: MtxLock<K>,
+) -> Option<u32> {
     drop(lock);
 
     // Check filesystem type.
@@ -166,22 +181,22 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
     let fs = CStr::from_ptr((*fs).name()).to_bytes();
 
     if !matches!(fs, b"exfatfs" | b"ufs") {
-        return true;
+        return Some(0);
     }
 
     // Write entry type.
     if !write_dump(k, fd, &[DumpItem::Ps4Part.into()]) {
-        return false;
+        return None;
     }
 
     // Write entry version.
     if !write_dump(k, fd, &[0]) {
-        return false;
+        return None;
     }
 
     // Write filesystem type.
     if !write_dump(k, fd, &fs.len().to_le_bytes()) || !write_dump(k, fd, fs) {
-        return false;
+        return None;
     }
 
     // Write mounted from.
@@ -189,7 +204,7 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
     let dev = CStr::from_ptr((*stats).mounted_from()).to_bytes();
 
     if !write_dump(k, fd, &dev.len().to_le_bytes()) || !write_dump(k, fd, dev) {
-        return false;
+        return None;
     }
 
     // Get root vnode.
@@ -197,11 +212,12 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
         Ok(v) => v,
         Err(_) => {
             notify(k, "Couldn't get root vnode");
-            return false;
+            return None;
         }
     };
 
     // Dump all vnodes.
+    let mut items = 1; // Current partition.
     let mut pending = VecDeque::from([PendingVnode {
         k,
         vnode: vp,
@@ -218,17 +234,19 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
         } else {
             let m = format!("Unknown vnode {ty}");
             notify(k, &m);
-            return false;
+            return None;
         };
 
         // Write type and path.
         if !write_dump(k, fd, &[ty.into()]) {
-            return false;
+            return None;
         }
 
         if !write_dump(k, fd, &p.path.len().to_le_bytes()) || !write_dump(k, fd, &p.path) {
-            return false;
+            return None;
         }
+
+        items += 1;
 
         // Dump.
         let ok = match ty {
@@ -238,12 +256,16 @@ unsafe fn dump_mount<K: Kernel>(k: K, fd: c_int, mp: *mut K::Mount, lock: MtxLoc
         };
 
         if !ok {
-            return false;
+            return None;
         }
     }
 
     // Write end entry.
-    write_dump(k, fd, &[PartItem::End.into()])
+    if write_dump(k, fd, &[PartItem::End.into()]) {
+        Some(items)
+    } else {
+        None
+    }
 }
 
 unsafe fn list_files<K: Kernel>(
