@@ -59,7 +59,7 @@ pub enum ItemReader<'a, F> {
     Ps4Part(crate::ps4::PartReader<'a, F>),
 }
 
-impl<'a, F> Display for ItemReader<'a, F> {
+impl<F> Display for ItemReader<'_, F> {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         let name = match self {
             Self::Ps4Part(_) => "PlayStation 4 partition",

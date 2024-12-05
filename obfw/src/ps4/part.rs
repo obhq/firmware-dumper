@@ -118,7 +118,7 @@ struct UncompressedFile<'a, F> {
     off: usize,
 }
 
-impl<'a, F: Read> Read for UncompressedFile<'a, F> {
+impl<F: Read> Read for UncompressedFile<'_, F> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
